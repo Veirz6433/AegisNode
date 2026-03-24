@@ -1,28 +1,16 @@
 import gc
+import argparse
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv
 from torch_geometric.loader import NeighborLoader
-from opacus import PrivacyEngine
+import flwr as fl
+from flwr.common import NDArrays
+from typing import Tuple, Dict
 
 
-# ── 1. Load a single shard ────────────────────────────────────────────────────
-data = torch.load("data_shards/client_0.pt", weights_only=False)
-print(f"Shard loaded → nodes: {data.num_nodes}, edges: {data.num_edges}")
-print(f"Feature shape: {data.x.shape}  |  Label shape: {data.y.shape}")
-
-
-# ── 2. NeighborLoader (RAM Saver) ─────────────────────────────────────────────
-loader = NeighborLoader(
-    data,
-    num_neighbors=[10, 10],
-    batch_size=64,
-    input_nodes=None,
-    shuffle=True,
-)
-
-
-# ── 3. AegisSAGE Model ────────────────────────────────────────────────────────
+# ── 1. AegisSAGE Model ────────────────────────────────────────────────────────
 class AegisSAGE(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
         super().__init__()
@@ -34,33 +22,28 @@ class AegisSAGE(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, p=0.3, training=self.training)
         x = self.conv2(x, edge_index)
-        return x  # raw logits — CrossEntropyLoss handles softmax
+        return x
 
 
-# ── 4. Local DP Training Function ─────────────────────────────────────────────
-def train_local_model(model, train_loader, optimizer, epochs=3):
-    """
-    DP-SGD compatible with PyG NeighborLoader.
-    Uses manual per-sample gradient clipping + Gaussian noise
-    instead of make_private() (which breaks on PyG's Data objects).
-    """
-    MAX_GRAD_NORM  = 1.0
+# ── 2. Local DP Training Function ─────────────────────────────────────────────
+def train_local_model(model, train_loader, optimizer, epochs=1):
+    import math
+    MAX_GRAD_NORM    = 1.0
     NOISE_MULTIPLIER = 1.0
-    DELTA          = 1e-5
+    DELTA            = 1e-5
 
     model.train()
-    final_loss = 0.0
+    final_loss  = 0.0
     total_steps = 0
 
     for epoch in range(epochs):
-        epoch_loss = 0.0
+        epoch_loss  = 0.0
         num_batches = 0
 
         for batch in train_loader:
             optimizer.zero_grad()
 
-            out = model(batch.x, batch.edge_index)
-
+            out      = model(batch.x, batch.edge_index)
             seed_out = out[:batch.batch_size]
             seed_y   = batch.y[:batch.batch_size]
 
@@ -73,13 +56,12 @@ def train_local_model(model, train_loader, optimizer, epochs=3):
             remapped_y = seed_y[mask] - 1
             loss = F.cross_entropy(seed_out[mask], remapped_y.long())
 
-            # loss = F.cross_entropy(seed_out[mask], seed_y[mask].long())
             loss.backward()
 
-            # ── DP Step 1: Gradient Clipping ──────────────────────────────────
+            # DP Step 1: Clip
             torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
 
-            # ── DP Step 2: Gaussian Noise Injection ───────────────────────────
+            # DP Step 2: Inject Gaussian noise
             with torch.no_grad():
                 for param in model.parameters():
                     if param.grad is not None:
@@ -92,45 +74,120 @@ def train_local_model(model, train_loader, optimizer, epochs=3):
             num_batches += 1
             total_steps += 1
 
-            # ── RAM Health Bar ─────────────────────────────────────────────────
-            del batch, out, seed_out, seed_y, mask, loss
+            del batch, out, seed_out, seed_y, mask, remapped_y, loss
             gc.collect()
 
         avg_loss   = epoch_loss / max(num_batches, 1)
         final_loss = avg_loss
-        print(f"  Epoch {epoch + 1}/{epochs} — Loss: {avg_loss:.4f}")
+        print(f"    Epoch {epoch + 1}/{epochs} — Loss: {avg_loss:.4f}")
 
-    # ── Privacy Budget Estimate (RDP Accountant approximation) ────────────────
-    # ε ≈ noise_multiplier^-2 * sqrt(2 * steps * ln(1/δ))
-    import math
     epsilon = (1.0 / NOISE_MULTIPLIER**2) * math.sqrt(
         2 * total_steps * math.log(1.0 / DELTA)
     )
-    print(f"\n🔒 LDP Privacy Budget spent: ε ≈ {epsilon:.4f}  (δ = {DELTA})")
-    print(f"   Interpretation: {'⚠ Weak privacy' if epsilon > 10 else '✅ Strong privacy'}")
+    print(f"    🔒 ε ≈ {epsilon:.4f}  (δ = {DELTA})")
 
     return final_loss, epsilon
 
 
-# ── 5. Sanity Check — single forward pass (no training) ───────────────────────
-model = AegisSAGE(in_channels=165, hidden_channels=64, out_channels=2)
-print(f"\nModel architecture:\n{model}\n")
+# ── 3. Flower NumPyClient Wrapper ─────────────────────────────────────────────
+class AegisFlowerClient(fl.client.NumPyClient):
 
-batch = next(iter(loader))
-print(f"Batch → nodes: {batch.num_nodes}, edges: {batch.num_edges}")
+    def __init__(self, client_id: int):
+        self.client_id = client_id
 
-model.eval()
-with torch.no_grad():
-    out = model(batch.x, batch.edge_index)
+        self.data = torch.load(
+            f"data_shards/client_{client_id}.pt", weights_only=False
+        )
+        self.loader = NeighborLoader(
+            self.data,
+            num_neighbors=[10, 10],
+            batch_size=64,
+            input_nodes=None,
+            shuffle=True,
+        )
+        self.model     = AegisSAGE(in_channels=165, hidden_channels=64, out_channels=2)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
 
-print(f"Output tensor shape: {out.shape}")
-print("\n✅ Engine check passed. AegisSAGE is ready.")
+        print(f"  [Client {client_id}] ✅ Initialized — "
+              f"nodes: {self.data.num_nodes}, edges: {self.data.num_edges}")
+
+    def get_parameters(self, config) -> NDArrays:
+        print(f"  [Client {self.client_id}] 📤 Sending parameters to server...")
+        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+
+    def set_parameters(self, parameters: NDArrays):
+        print(f"  [Client {self.client_id}] 📥 Receiving global parameters...")
+        state_dict = {
+            k: torch.tensor(v)
+            for k, v in zip(self.model.state_dict().keys(), parameters)
+        }
+        self.model.load_state_dict(state_dict, strict=True)
+
+    def fit(self, parameters: NDArrays, config) -> Tuple[NDArrays, int, Dict]:
+        print(f"\n  [Client {self.client_id}] 🏋️  fit() called...")
+        self.set_parameters(parameters)
+
+        loss, epsilon = train_local_model(
+            self.model, self.loader, self.optimizer, epochs=1
+        )
+
+        print(f"  [Client {self.client_id}] ✅ fit() done — "
+              f"loss: {loss:.4f} | ε: {epsilon:.4f}")
+
+        return self.get_parameters(config={}), self.data.num_nodes, {
+            "loss":    float(loss),
+            "epsilon": float(epsilon),
+        }
+
+    def evaluate(self, parameters: NDArrays, config) -> Tuple[float, int, Dict]:
+        print(f"  [Client {self.client_id}] 📊 evaluate() called...")
+        self.set_parameters(parameters)
+
+        self.model.eval()
+        total_loss, correct, total = 0.0, 0, 0
+
+        with torch.no_grad():
+            for batch in self.loader:
+                out      = self.model(batch.x, batch.edge_index)
+                seed_out = out[:batch.batch_size]
+                seed_y   = batch.y[:batch.batch_size]
+
+                mask = (seed_y == 1) | (seed_y == 2)
+                if mask.sum() == 0:
+                    continue
+
+                remapped_y = seed_y[mask] - 1
+                loss       = F.cross_entropy(seed_out[mask], remapped_y.long())
+                total_loss += loss.item()
+
+                preds    = seed_out[mask].argmax(dim=1)
+                correct += (preds == remapped_y).sum().item()
+                total   += mask.sum().item()
+
+                del batch, out, seed_out, seed_y, mask, remapped_y
+                gc.collect()
+
+        accuracy = correct / max(total, 1)
+        avg_loss = total_loss / max(total, 1)
+
+        print(f"  [Client {self.client_id}] 📈 Accuracy: {accuracy:.4f} | "
+              f"Loss: {avg_loss:.4f}")
+
+        return float(avg_loss), self.data.num_nodes, {"accuracy": float(accuracy)}
 
 
-# ── 6. Run a real DP training session ─────────────────────────────────────────
-print("\n--- Starting Local DP Training ---")
-model = AegisSAGE(in_channels=165, hidden_channels=64, out_channels=2)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+# ── 4. Entry Point ────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--client-id", type=int, required=True,
+        help="Client ID 0–4, determines which shard to load"
+    )
+    args = parser.parse_args()
 
-final_loss, epsilon = train_local_model(model, loader, optimizer, epochs=3)
-print(f"\nTraining complete → Loss: {final_loss:.4f}  |  ε: {epsilon:.4f}")
+    print(f"\n🚀 Starting AegisNode Flower Client {args.client_id}...")
+
+    fl.client.start_client(
+        server_address="localhost:8080",
+        client=AegisFlowerClient(client_id=args.client_id).to_client(),
+    )
