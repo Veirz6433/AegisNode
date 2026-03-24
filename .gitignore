@@ -33,7 +33,6 @@ output/
 
 # ── Prometheus & Grafana (Monitoring Stack) ───────────────────────────────────
 prometheus-*/              # the extracted prometheus binary folder
-prometheus.yml             # contains your scrape targets (optional — keep if you want)
 grafana/                   # grafana data directory
 grafana-data/
 
@@ -42,3 +41,28 @@ docker-compose.override.yml
 
 # Prometheus data storage
 data/prometheus/
+
+# ── Large Binary Installers (caused GitHub push rejection) ───────────────────
+prometheus-*.tar.gz
+prometheus-*.zip
+grafana_*.deb
+grafana_*.rpm
+grafana-*.tar.gz
+promtool
+
+# ── Grafana binary package ────────────────────────────────────────────────────
+grafana_10.4.2_amd64.deb
+
+# ── Node modules (if you ever add a frontend) ─────────────────────────────────
+node_modules/
+
+# ── IDE files ─────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Flower/FL artifacts ───────────────────────────────────────────────────────
+*.npz
+wandb/
+runs/
