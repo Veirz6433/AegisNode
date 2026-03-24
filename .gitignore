@@ -3,6 +3,7 @@
 
 # Dataset files
 data/
+data_shards/
 
 # Python cache
 __pycache__/
@@ -10,7 +11,7 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Jupyter notebooks checkpoints
+# Jupyter checkpoints
 .ipynb_checkpoints/
 
 # Environment variables
@@ -29,3 +30,15 @@ Thumbs.db
 *.pth
 *.ckpt
 output/
+
+# ── Prometheus & Grafana (Monitoring Stack) ───────────────────────────────────
+prometheus-*/              # the extracted prometheus binary folder
+prometheus.yml             # contains your scrape targets (optional — keep if you want)
+grafana/                   # grafana data directory
+grafana-data/
+
+# Docker
+docker-compose.override.yml
+
+# Prometheus data storage
+data/prometheus/

@@ -1,7 +1,15 @@
+import os
+# Force OpenMP and MKL to only use 4 threads BEFORE any heavy math libraries load
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["NUMEXPR_NUM_THREADS"] = "4"
+
 import gc
 import argparse
 import numpy as np
 import torch
+torch.set_num_threads(4)
+
 import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv
 from torch_geometric.loader import NeighborLoader
