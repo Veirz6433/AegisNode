@@ -102,8 +102,9 @@ class AegisFlowerClient(fl.client.NumPyClient):
     def __init__(self, client_id: int):
         self.client_id = client_id
 
+        shard_id = client_id % 5
         self.data = torch.load(
-            f"data_shards/client_{client_id}.pt", weights_only=False
+            f"data_shards/client_{shard_id}.pt", weights_only=False
         )
         self.loader = NeighborLoader(
             self.data,

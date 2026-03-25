@@ -1,68 +1,60 @@
-# Virtual Environment
+# ── Python Virtual Environment ────────────────────────────────────────────────
 .venv/
-
-# Dataset files
-data/
-data_shards/
-
-# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Jupyter checkpoints
-.ipynb_checkpoints/
-
-# Environment variables
-.env
-.env.local
-
-# OS clutter
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Model checkpoints & outputs
+# ── Dataset & ML Tensors (Heavy Data) ─────────────────────────────────────────
+data/
+data_shards/
 *.pt
 *.pth
 *.ckpt
-output/
+*.npz
 
-# ── Prometheus & Grafana (Monitoring Stack) ───────────────────────────────────
-prometheus-*/              # the extracted prometheus binary folder
-grafana/                   # grafana data directory
-grafana-data/
-
-# Docker
-docker-compose.override.yml
-
-# Prometheus data storage
-data/prometheus/
-
-# ── Large Binary Installers (caused GitHub push rejection) ───────────────────
-prometheus-*.tar.gz
-prometheus-*.zip
-grafana_*.deb
-grafana_*.rpm
-grafana-*.tar.gz
-promtool
-
-# ── Grafana binary package ────────────────────────────────────────────────────
-grafana_10.4.2_amd64.deb
-
-# ── Node modules (if you ever add a frontend) ─────────────────────────────────
-node_modules/
-
-# ── IDE files ─────────────────────────────────────────────────────────────────
-.idea/
+# ── Jupyter & IDE Clutter ─────────────────────────────────────────────────────
+.ipynb_checkpoints/
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# ── Flower/FL artifacts ───────────────────────────────────────────────────────
-*.npz
+# ── Environment Variables & Logs ──────────────────────────────────────────────
+.env
+.env.local
+*.log
+logs/
+output/
 wandb/
 runs/
+
+# ── OS Clutter ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Downloads, Archives & Installers ──────────────────────────────────────────
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+promtool
+
+# ── Observability & Dashboarding ──────────────────────────────────────────────
+# Ignore everything inside the Prometheus binary folder...
+prometheus-2.51.0.linux-amd64/*
+
+# ...BUT force Git to track these specific configuration files inside it:
+!prometheus-2.51.0.linux-amd64/prometheus.yml
+!prometheus-2.51.0.linux-amd64/aegis_alert_rules.yml
+
+# Ignore local Grafana database mounts and extra Prometheus data
+grafana/
+grafana-data/
+data/prometheus/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Node modules (Frontend logic) ─────────────────────────────────────────────
+node_modules/

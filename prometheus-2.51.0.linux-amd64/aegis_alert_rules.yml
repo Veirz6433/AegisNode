@@ -1,0 +1,34 @@
+# aegis_alert_rules.yml
+groups:
+  - name: aegis_byzantine_alerts
+    rules:
+
+      # Fire immediately when ANY client anomaly score exceeds 1.0
+      - alert: ByzantineClientDetected
+        expr: aegis_client_anomaly_score > 1.0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "☠️ Byzantine client detected: {{ $labels.client_id }}"
+          description: >
+            Client {{ $labels.client_id }} has anomaly score {{ $value | printf "%.2f" }},
+            exceeding the poison threshold of 1.0.
+
+      # Fire if more than 1 malicious client in a single round
+      - alert: MultipleAttackersDetected
+        expr: aegis_malicious_clients_this_round > 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "🚨 Coordinated attack — {{ $value }} malicious clients this round"
+
+      # Warn if active clients drop below minimum threshold
+      - alert: InsufficientClients
+        expr: aegis_active_clients_total < 3
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: "⚠️ Only {{ $value }} clients active — aggregation may be unreliable"

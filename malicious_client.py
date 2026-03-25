@@ -9,7 +9,6 @@ import argparse
 import numpy as np
 import torch
 torch.set_num_threads(4)
-
 import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv
 from torch_geometric.loader import NeighborLoader
@@ -99,9 +98,14 @@ class MaliciousFlowerClient(fl.client.NumPyClient):
     def __init__(self, client_id: int):
         self.client_id = client_id
 
+        # ✅ NEW — wraps back to client_0 after client_4
+        shard_id = client_id % 5
         self.data = torch.load(
-            f"data_shards/client_{client_id}.pt", weights_only=False
+            f"data_shards/client_{shard_id}.pt", weights_only=False
         )
+        print(f"  ☠️  [ROGUE NODE {client_id}] Loading shard {shard_id} "
+            f"(client_id {client_id} % 5 = {shard_id})")
+
         self.loader = NeighborLoader(
             self.data,
             num_neighbors=[10, 10],
